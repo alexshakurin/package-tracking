@@ -13,13 +13,17 @@ import (
 )
 
 const (
-	defaultLogEnv      = "DEVELOPMENT"
-	defaultHttpAddress = ":8080"
+	defaultLogEnv   = "DEVELOPMENT"
+	defaultHttpHost = ""
+	defaultHttpPort = "8080"
+	defaultRabbitMq = "amqp://guest:guest@localhost:5672/"
 )
 
 type envOptions struct {
-	LogEnv  string
-	Address string
+	LogEnv   string
+	Host     string
+	Port     string
+	RabbitMq string
 }
 
 func main() {
@@ -40,8 +44,10 @@ func start() int {
 	}()
 
 	s := server.New(server.Options{
-		Log:     logger,
-		Address: opts.Address,
+		Log:      logger,
+		Host:     opts.Host,
+		Port:     opts.Port,
+		RabbitMq: opts.RabbitMq,
 	})
 
 	var errGroup errgroup.Group
@@ -60,11 +66,12 @@ func start() int {
 
 	// TODO: stop other activities if any
 
-	if err := s.Start(); err != nil {
+	if err := s.Start(ctx); err != nil {
 		logger.Error("error starting the server", zap.Error(err))
 	}
 
 	if err := errGroup.Wait(); err != nil {
+		logger.Info("error stopping app", zap.Error(err))
 		return 1
 	}
 
@@ -77,14 +84,26 @@ func loadEnv() envOptions {
 		logEnv = defaultLogEnv
 	}
 
-	httpAddress, ok := os.LookupEnv("HTTP_ADDRESS")
+	host, ok := os.LookupEnv("HTTP_HOST")
 	if !ok {
-		httpAddress = defaultHttpAddress
+		host = defaultHttpHost
+	}
+
+	port, ok := os.LookupEnv("HTTP_PORT")
+	if !ok || port == "" {
+		port = defaultHttpPort
+	}
+
+	rabbitMq, ok := os.LookupEnv("RABBITMQ")
+	if !ok {
+		rabbitMq = defaultRabbitMq
 	}
 
 	return envOptions{
-		LogEnv:  logEnv,
-		Address: httpAddress,
+		LogEnv:   logEnv,
+		Host:     host,
+		Port:     port,
+		RabbitMq: rabbitMq,
 	}
 }
 

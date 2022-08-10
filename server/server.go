@@ -4,21 +4,28 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/alexshakurin/package-tracking/messaging"
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+	"net"
 	"net/http"
 	"time"
 )
 
 type Server struct {
-	address string
-	mux     chi.Router
-	server  *http.Server
-	log     *zap.Logger
+	address  string
+	mux      chi.Router
+	server   *http.Server
+	log      *zap.Logger
+	upgrader *websocket.Upgrader
+	conn     *messaging.RabbitMqConnection
 }
 
 type Options struct {
-	Address  string
+	Host     string
+	Port     string
 	RabbitMq string
 	Log      *zap.Logger
 }
@@ -32,8 +39,10 @@ func New(opts Options) *Server {
 		logger = opts.Log
 	}
 
-	address := opts.Address
+	address := net.JoinHostPort(opts.Host, opts.Port)
 	mux := chi.NewMux()
+
+	rabbitMq := messaging.Must(messaging.NewConnection(opts.RabbitMq, logger))
 
 	return &Server{
 		address: address,
@@ -42,14 +51,18 @@ func New(opts Options) *Server {
 			Addr:    address,
 			Handler: mux,
 		},
-		log: logger,
+		log:      logger,
+		upgrader: &websocket.Upgrader{},
+		conn:     rabbitMq,
 	}
 }
 
-func (s *Server) Start() error {
+func (s *Server) Start(ctx context.Context) error {
 	s.log.Info("starting server", zap.String("address", s.address))
 
 	s.setupRoutes()
+
+	s.conn.ListenForDisconnect(ctx)
 
 	if err := s.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("error starting server: %w", err)
@@ -66,9 +79,22 @@ func (s *Server) Stop() error {
 	ctx, stop := context.WithTimeout(context.Background(), maxTimeout*time.Second)
 	defer stop()
 
-	if err := s.server.Shutdown(ctx); err != nil {
-		return fmt.Errorf("error stopping server: %w", err)
-	}
+	var errGroup errgroup.Group
+	errGroup.Go(func() error {
+		if err := s.conn.Close(ctx); err != nil {
+			return fmt.Errorf("error closing rabbitmq connection: %w", err)
+		}
 
-	return nil
+		return nil
+	})
+
+	errGroup.Go(func() error {
+		if err := s.server.Shutdown(ctx); err != nil {
+			return fmt.Errorf("error stopping server: %w", err)
+		}
+
+		return nil
+	})
+
+	return errGroup.Wait()
 }

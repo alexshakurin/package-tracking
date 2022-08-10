@@ -29,8 +29,8 @@
             }
         },
         mounted() {
-            let vehicleId = "123"
-            let ws = new WebSocket(`ws://localhost:1323/packages/track/${vehicleId}`)
+            let packageId = "123"
+            let ws = new WebSocket(`ws://localhost:8080/packages/track/${packageId}`)
             ws.onopen = () => {
                 console.log('Connected')
             }
